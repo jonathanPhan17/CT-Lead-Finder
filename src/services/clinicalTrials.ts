@@ -13,6 +13,12 @@ interface CTContact {
   email?: string;
 }
 
+interface CTInvestigator {
+  name?: string;
+  role?: string;
+  affiliation?: string;
+}
+
 interface CTLocation {
   facility?: string;
   city?: string;
@@ -21,6 +27,7 @@ interface CTLocation {
   zip?: string;
   status?: string;
   contacts?: CTContact[];
+  investigators?: CTInvestigator[];
   geoPoint?: { lat: number; lon: number };
 }
 
@@ -77,7 +84,25 @@ function isPI(role?: string): boolean {
   return (role ?? '').toUpperCase().includes('PRINCIPAL');
 }
 
-function extractContacts(study: CTStudy): ContactRow[] {
+/** Haversine distance in miles between two lat/lng points */
+function distanceMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8; // Earth radius in miles
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function extractContacts(
+  study: CTStudy,
+  searchLat: number,
+  searchLng: number,
+  maxDistanceMiles: number,
+): ContactRow[] {
   const rows: ContactRow[] = [];
   const ps = study.protocolSection;
   const nctId = ps.identificationModule.nctId;
@@ -92,17 +117,14 @@ function extractContacts(study: CTStudy): ContactRow[] {
 
   if (!clm) return rows;
 
-  // Central contacts (study-wide, no specific facility)
+  // Central contacts — study-wide, always include
   for (let i = 0; i < (clm.centralContacts?.length ?? 0); i++) {
     const c = clm.centralContacts![i];
     rows.push({
       id: `${nctId}-cen-${i}`,
       nctId, status, phase, sponsor, conditions,
       studyTitle: title,
-      facility: '',
-      city: '',
-      state: '',
-      country: '',
+      facility: '', city: '', state: '', country: '',
       contactName: c.name ?? '',
       contactRole: formatRole(c.role),
       contactEmail: c.email ?? '',
@@ -112,24 +134,51 @@ function extractContacts(study: CTStudy): ContactRow[] {
     });
   }
 
-  // Location contacts
+  // Location contacts & investigators — only from sites within the search radius
   for (let li = 0; li < (clm.locations?.length ?? 0); li++) {
     const loc = clm.locations![li];
+
+    // Skip this site if it has no coordinates (can't verify it's in range)
+    // or if it's outside the search radius
+    if (!loc.geoPoint) continue;
+    const d = distanceMiles(searchLat, searchLng, loc.geoPoint.lat, loc.geoPoint.lon);
+    if (d > maxDistanceMiles) continue;
+
+    const base = {
+      nctId, status, phase, sponsor, conditions,
+      studyTitle: title,
+      facility: loc.facility ?? '',
+      city: loc.city ?? '',
+      state: loc.state ?? '',
+      country: loc.country ?? '',
+    };
+
+    // Contacts (have phone/email)
     for (let ci = 0; ci < (loc.contacts?.length ?? 0); ci++) {
       const c = loc.contacts![ci];
       rows.push({
-        id: `${nctId}-loc-${li}-${ci}`,
-        nctId, status, phase, sponsor, conditions,
-        studyTitle: title,
-        facility: loc.facility ?? '',
-        city: loc.city ?? '',
-        state: loc.state ?? '',
-        country: loc.country ?? '',
+        ...base,
+        id: `${nctId}-loc-${li}-c-${ci}`,
         contactName: c.name ?? '',
         contactRole: formatRole(c.role),
         contactEmail: c.email ?? '',
         contactPhone: formatPhone(c.phone, c.phoneExt),
         isPrincipalInvestigator: isPI(c.role),
+        source: 'location',
+      });
+    }
+
+    // Investigators (PIs listed separately — usually no email/phone)
+    for (let ii = 0; ii < (loc.investigators?.length ?? 0); ii++) {
+      const inv = loc.investigators![ii];
+      rows.push({
+        ...base,
+        id: `${nctId}-loc-${li}-inv-${ii}`,
+        contactName: inv.name ?? '',
+        contactRole: formatRole(inv.role),
+        contactEmail: '',
+        contactPhone: '',
+        isPrincipalInvestigator: isPI(inv.role),
         source: 'location',
       });
     }
@@ -140,10 +189,7 @@ function extractContacts(study: CTStudy): ContactRow[] {
 
 function formatRole(role?: string): string {
   if (!role) return '';
-  return role
-    .replace(/_/g, ' ')
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return role.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function formatPhone(phone?: string, ext?: string): string {
@@ -154,7 +200,7 @@ function formatPhone(phone?: string, ext?: string): string {
 function dedupeContacts(contacts: ContactRow[]): ContactRow[] {
   const seen = new Set<string>();
   return contacts.filter((c) => {
-    const key = `${c.nctId}|${c.contactName.toLowerCase()}|${c.contactEmail.toLowerCase()}`;
+    const key = `${c.nctId}|${c.contactName.toLowerCase()}|${c.facility.toLowerCase()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -167,7 +213,7 @@ export async function searchTrials(opts: SearchOptions): Promise<SearchResponse>
   const params = new URLSearchParams({
     format: 'json',
     'filter.geo': `distance(${opts.lat},${opts.lng},${opts.distance}mi)`,
-    pageSize: '200',
+    pageSize: '25',
   });
 
   if (opts.recruitingOnly) {
@@ -180,14 +226,16 @@ export async function searchTrials(opts: SearchOptions): Promise<SearchResponse>
   const response = await axios.get<CTResponse>(`${CT_V2_API}?${params}`);
   const data = response.data;
 
-  console.debug('[ClinicalTrials] raw response sample:', data.studies?.[0]);
-
-  const allContacts = (data.studies ?? []).flatMap(extractContacts);
+  const allContacts = (data.studies ?? []).flatMap((s) =>
+    extractContacts(s, opts.lat, opts.lng, opts.distance)
+  );
   const contacts = dedupeContacts(allContacts);
+
+  const uniqueStudies = new Set(contacts.map((c) => c.nctId)).size;
 
   return {
     contacts,
     nextPageToken: data.nextPageToken,
-    totalStudies: data.totalCount ?? 0,
+    totalStudies: uniqueStudies,
   };
 }

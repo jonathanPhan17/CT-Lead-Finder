@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   server: {
+    open: true,
     proxy: {
       '/nominatim-proxy': {
         target: 'https://nominatim.openstreetmap.org',
