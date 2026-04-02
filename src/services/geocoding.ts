@@ -39,7 +39,7 @@ function toShortName(r: NominatimResult): string {
   return parts.slice(0, 3).join(', ');
 }
 
-export async function fetchSuggestions(query: string): Promise<LocationSuggestion[]> {
+export async function fetchSuggestions(query: string, signal?: AbortSignal): Promise<LocationSuggestion[]> {
   if (query.trim().length < 3) return [];
 
   const params = new URLSearchParams({
@@ -51,7 +51,7 @@ export async function fetchSuggestions(query: string): Promise<LocationSuggestio
 
   const response = await axios.get<NominatimResult[]>(
     `/nominatim-proxy/search?${params}`,
-    { headers: { Accept: 'application/json' } }
+    { headers: { Accept: 'application/json' }, signal }
   );
 
   return response.data.map((r) => ({
@@ -62,7 +62,7 @@ export async function fetchSuggestions(query: string): Promise<LocationSuggestio
   }));
 }
 
-export async function geocodeLocation(query: string): Promise<GeoResult> {
+export async function geocodeLocation(query: string, signal?: AbortSignal): Promise<GeoResult> {
   const params = new URLSearchParams({
     q: query,
     format: 'json',
@@ -72,7 +72,7 @@ export async function geocodeLocation(query: string): Promise<GeoResult> {
 
   const response = await axios.get<NominatimResult[]>(
     `/nominatim-proxy/search?${params}`,
-    { headers: { Accept: 'application/json' } }
+    { headers: { Accept: 'application/json' }, signal }
   );
 
   if (!response.data.length) {

@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import axios from 'axios';
 import { AlertCircle, X, MapPin, FlaskConical } from 'lucide-react';
 import Header from './components/Header';
 import SearchPanel from './components/SearchPanel';
@@ -91,6 +92,7 @@ export default function App() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchedLocation, setSearchedLocation] = useState(urlLocation);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Sync hasSearched back to false when URL clears (browser back to /)
   useEffect(() => {
@@ -109,6 +111,11 @@ export default function App() {
 
   const runSearch = useCallback(
     async (location: string, distance: number, pageToken?: string) => {
+      // Abort any in-flight search
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       setError(null);
       if (!pageToken) {
         setContacts([]);
@@ -121,10 +128,10 @@ export default function App() {
 
       try {
         if (!pageToken) setLoadingStep('geocoding');
-        const geo = await geocodeLocation(location);
+        const geo = await geocodeLocation(location, controller.signal);
 
         if (!pageToken) setLoadingStep('fetching');
-        const result = await searchTrials({ lat: geo.lat, lng: geo.lng, distance, recruitingOnly: true, pageToken });
+        const result = await searchTrials({ lat: geo.lat, lng: geo.lng, distance, recruitingOnly: true, pageToken }, controller.signal);
 
         if (!pageToken) {
           setContacts(result.contacts);
@@ -139,6 +146,7 @@ export default function App() {
         }
         setNextPageToken(result.nextPageToken);
       } catch (err: unknown) {
+        if (axios.isCancel(err)) return; // silently ignore cancelled requests
         const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
         setError(msg);
       } finally {

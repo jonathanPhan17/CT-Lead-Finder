@@ -209,7 +209,7 @@ function dedupeContacts(contacts: ContactRow[]): ContactRow[] {
 
 // ── main export ───────────────────────────────────────────────────────────────
 
-export async function searchTrials(opts: SearchOptions): Promise<SearchResponse> {
+export async function searchTrials(opts: SearchOptions, signal?: AbortSignal): Promise<SearchResponse> {
   const params = new URLSearchParams({
     format: 'json',
     'filter.geo': `distance(${opts.lat},${opts.lng},${opts.distance}mi)`,
@@ -223,7 +223,7 @@ export async function searchTrials(opts: SearchOptions): Promise<SearchResponse>
     params.set('pageToken', opts.pageToken);
   }
 
-  const response = await axios.get<CTResponse>(`${CT_V2_API}?${params}`);
+  const response = await axios.get<CTResponse>(`${CT_V2_API}?${params}`, { signal });
   const data = response.data;
 
   const allContacts = (data.studies ?? []).flatMap((s) =>
