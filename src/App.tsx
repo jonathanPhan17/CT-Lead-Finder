@@ -22,6 +22,8 @@ const STEP_LABEL: Record<NonNullable<LoadingStep>, string> = {
   fetching:  'Fetching trials…',
 };
 
+const MAX_PAGES = Number(import.meta.env.VITE_MAX_PAGES) || 20;
+
 const STEP_ICON: Record<NonNullable<LoadingStep>, React.ReactNode> = {
   geocoding: <MapPin size={16} className="animate-bounce" />,
   fetching:  <FlaskConical size={16} className="animate-pulse" />,
@@ -88,8 +90,7 @@ export default function App() {
   const [loadingStep, setLoadingStep] = useState<LoadingStep>(null);
   const [contacts, setContacts] = useState<ContactRow[]>([]);
   const [totalStudies, setTotalStudies] = useState(0);
-  const [nextPageToken, setNextPageToken] = useState<string | undefined>();
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [fetchProgress, setFetchProgress] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [searchedLocation, setSearchedLocation] = useState(urlLocation);
   const abortRef = useRef<AbortController | null>(null);
@@ -110,51 +111,67 @@ export default function App() {
   }, [isDark]);
 
   const runSearch = useCallback(
-    async (location: string, distance: number, pageToken?: string) => {
+    async (location: string, distance: number) => {
       // Abort any in-flight search
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
 
       setError(null);
-      if (!pageToken) {
-        setContacts([]);
-        setTotalStudies(0);
-        setNextPageToken(undefined);
-        setSearchedLocation(location);
-      } else {
-        setLoadingMore(true);
-      }
+      setContacts([]);
+      setTotalStudies(0);
+      setFetchProgress('');
+      setSearchedLocation(location);
 
       try {
-        if (!pageToken) setLoadingStep('geocoding');
+        setLoadingStep('geocoding');
         const geo = await geocodeLocation(location, controller.signal);
 
-        if (!pageToken) setLoadingStep('fetching');
-        const result = await searchTrials({ lat: geo.lat, lng: geo.lng, distance, recruitingOnly: true, pageToken }, controller.signal);
+        setLoadingStep('fetching');
+        let allContacts: ContactRow[] = [];
+        const allStudyIds = new Set<string>();
+        let pageToken: string | undefined;
+        let page = 0;
 
-        if (!pageToken) {
-          setContacts(result.contacts);
-          setTotalStudies(result.totalStudies);
-        } else {
-          setContacts((prev) => {
-            const existingIds = new Set(prev.map((c) => c.id));
-            const merged = [...prev, ...result.contacts.filter((c) => !existingIds.has(c.id))];
-            setTotalStudies(new Set(merged.map((c) => c.nctId)).size);
-            return merged;
-          });
-        }
-        setNextPageToken(result.nextPageToken);
+        do {
+          const result = await searchTrials(
+            { lat: geo.lat, lng: geo.lng, distance, recruitingOnly: true, pageToken },
+            controller.signal,
+          );
+
+          // Dedupe against already-collected contacts
+          const existingIds = new Set(allContacts.map((c) => c.id));
+          const newContacts = result.contacts.filter((c) => !existingIds.has(c.id));
+          allContacts = [...allContacts, ...newContacts];
+          for (const id of result.studyIds) allStudyIds.add(id);
+
+          // Update UI progressively so user sees results arriving
+          setContacts(allContacts);
+          setTotalStudies(allStudyIds.size);
+
+          pageToken = result.nextPageToken;
+          page++;
+
+          // Stop early if this page had zero in-radius studies
+          // (API is returning results outside our search area)
+          if (result.studyIds.length === 0) break;
+
+          if (pageToken) {
+            setFetchProgress(`Fetched page ${page}, ${allContacts.length} contacts so far…`);
+          }
+        } while (pageToken && page < MAX_PAGES);
+
+        setFetchProgress('');
       } catch (err: unknown) {
-        if (axios.isCancel(err)) return; // silently ignore cancelled requests
+        if (axios.isCancel(err)) return;
         const msg = err instanceof Error ? err.message : 'An unexpected error occurred.';
         setError(msg);
       } finally {
         setLoadingStep(null);
-        setLoadingMore(false);
+        setFetchProgress('');
       }
     },
-    []
+    [],
   );
 
   useEffect(() => {
@@ -167,11 +184,6 @@ export default function App() {
     // Immediately flip to results layout — no waiting
     setHasSearched(true);
     setSearchParams({ loc: location, dist: String(distance) });
-  }
-
-  function handleLoadMore() {
-    if (!nextPageToken) return;
-    runSearch(urlLocation, urlDistance, nextPageToken);
   }
 
   const isLoading = loadingStep !== null;
@@ -212,14 +224,19 @@ export default function App() {
 
         {isLoading && <LoadingSkeleton step={loadingStep} />}
 
-        {!isLoading && hasSearched && contacts.length > 0 && (
+        {fetchProgress && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <FlaskConical size={14} className="animate-pulse" />
+            <span>{fetchProgress}</span>
+          </div>
+        )}
+
+        {hasSearched && contacts.length > 0 && (
           <ResultsTable
             contacts={contacts}
             totalStudies={totalStudies}
             searchedLocation={searchedLocation}
-            hasMore={!!nextPageToken}
-            loadingMore={loadingMore}
-            onLoadMore={handleLoadMore}
+            distance={urlDistance}
           />
         )}
 

@@ -50,7 +50,6 @@ interface CTStudy {
       leadSponsor?: { name?: string };
     };
     contactsLocationsModule?: {
-      centralContacts?: CTContact[];
       locations?: CTLocation[];
     };
   };
@@ -75,7 +74,7 @@ export interface SearchOptions {
 export interface SearchResponse {
   contacts: ContactRow[];
   nextPageToken?: string;
-  totalStudies: number;
+  studyIds: string[];
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -117,24 +116,9 @@ function extractContacts(
 
   if (!clm) return rows;
 
-  // Central contacts — study-wide, always include
-  for (let i = 0; i < (clm.centralContacts?.length ?? 0); i++) {
-    const c = clm.centralContacts![i];
-    rows.push({
-      id: `${nctId}-cen-${i}`,
-      nctId, status, phase, sponsor, conditions,
-      studyTitle: title,
-      facility: '', city: '', state: '', country: '',
-      contactName: c.name ?? '',
-      contactRole: formatRole(c.role),
-      contactEmail: c.email ?? '',
-      contactPhone: formatPhone(c.phone, c.phoneExt),
-      isPrincipalInvestigator: isPI(c.role),
-      source: 'central',
-    });
-  }
-
-  // Location contacts & investigators — only from sites within the search radius
+  // Only extract contacts from locations within the search radius.
+  // Central contacts and overall officials are excluded — they are typically
+  // study leadership at a remote institution, not local site contacts.
   for (let li = 0; li < (clm.locations?.length ?? 0); li++) {
     const loc = clm.locations![li];
 
@@ -197,14 +181,34 @@ function formatPhone(phone?: string, ext?: string): string {
   return ext ? `${phone} ext. ${ext}` : phone;
 }
 
+/** Dedupe contacts by name+trial, merging the richest contact info across duplicates. */
 function dedupeContacts(contacts: ContactRow[]): ContactRow[] {
-  const seen = new Set<string>();
-  return contacts.filter((c) => {
-    const key = `${c.nctId}|${c.contactName.toLowerCase()}|${c.facility.toLowerCase()}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const map = new Map<string, ContactRow>();
+
+  for (const c of contacts) {
+    // Key by name + trial only (ignore facility so overallOfficials merge with location entries)
+    const key = `${c.nctId}|${c.contactName.toLowerCase()}`;
+    const existing = map.get(key);
+
+    if (!existing) {
+      map.set(key, { ...c });
+      continue;
+    }
+
+    // Merge: keep the richest info from either entry
+    if (!existing.contactEmail && c.contactEmail) existing.contactEmail = c.contactEmail;
+    if (!existing.contactPhone && c.contactPhone) existing.contactPhone = c.contactPhone;
+    if (!existing.facility && c.facility) existing.facility = c.facility;
+    if (!existing.city && c.city) existing.city = c.city;
+    if (!existing.state && c.state) existing.state = c.state;
+    if (!existing.country && c.country) existing.country = c.country;
+    // Promote to PI if any entry marks them as PI
+    if (c.isPrincipalInvestigator) existing.isPrincipalInvestigator = true;
+    // Prefer location source over central (has facility info)
+    if (existing.source === 'central' && c.source === 'location') existing.source = c.source;
+  }
+
+  return Array.from(map.values());
 }
 
 // ── main export ───────────────────────────────────────────────────────────────
@@ -213,7 +217,7 @@ export async function searchTrials(opts: SearchOptions, signal?: AbortSignal): P
   const params = new URLSearchParams({
     format: 'json',
     'filter.geo': `distance(${opts.lat},${opts.lng},${opts.distance}mi)`,
-    pageSize: '25',
+    pageSize: '100',
   });
 
   if (opts.recruitingOnly) {
@@ -226,16 +230,32 @@ export async function searchTrials(opts: SearchOptions, signal?: AbortSignal): P
   const response = await axios.get<CTResponse>(`${CT_V2_API}?${params}`, { signal });
   const data = response.data;
 
+  // Count studies with at least one location in radius (independent of contacts)
+  const studyIds: string[] = [];
+  for (const s of data.studies ?? []) {
+    const locs = s.protocolSection.contactsLocationsModule?.locations ?? [];
+    for (const loc of locs) {
+      if (loc.geoPoint && distanceMiles(opts.lat, opts.lng, loc.geoPoint.lat, loc.geoPoint.lon) <= opts.distance) {
+        studyIds.push(s.protocolSection.identificationModule.nctId);
+        break;
+      }
+    }
+  }
+
   const allContacts = (data.studies ?? []).flatMap((s) =>
     extractContacts(s, opts.lat, opts.lng, opts.distance)
   );
-  const contacts = dedupeContacts(allContacts);
+  const deduped = dedupeContacts(allContacts);
 
-  const uniqueStudies = new Set(contacts.map((c) => c.nctId)).size;
+  // Only keep contacts from studies that have at least one PI in the results
+  const studiesWithPI = new Set(
+    deduped.filter((c) => c.isPrincipalInvestigator).map((c) => c.nctId),
+  );
+  const contacts = deduped.filter((c) => studiesWithPI.has(c.nctId));
 
   return {
     contacts,
     nextPageToken: data.nextPageToken,
-    totalStudies: uniqueStudies,
+    studyIds,
   };
 }

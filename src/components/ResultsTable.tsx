@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import {
-  Copy, Download, Check, Mail,
-  ExternalLink, ChevronLeft, ChevronRight, Loader2, Building2, Globe,
+  Copy, Download, Check, Mail, Search, X, ArrowUpDown,
+  ExternalLink, ChevronLeft, ChevronRight, Building2, Globe,
   MapPin,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -12,13 +12,70 @@ import { downloadCSV, copyToClipboard } from '../utils/export';
 
 const PAGE_SIZE = 15; // cards per page
 
+type SortOption = 'outreach' | 'pi-first' | 'has-email' | 'most-contacts' | 'facility-az' | 'condition-az' | 'sponsor-az' | 'default';
+
+const SORT_LABELS: Record<SortOption, string> = {
+  'outreach':       'Best for outreach',
+  'pi-first':       'Most PIs first',
+  'has-email':      'Most emails first',
+  'most-contacts':  'Most contacts first',
+  'facility-az':    'Facility (A–Z)',
+  'condition-az':   'Condition (A–Z)',
+  'sponsor-az':     'Sponsor (A–Z)',
+  'default':        'Default order',
+};
+
+function sortGroups(groups: LocationGroup[], sort: SortOption): LocationGroup[] {
+  if (sort === 'default') return groups;
+  const sorted = [...groups];
+  switch (sort) {
+    case 'outreach':
+      // PIs with emails first, then PIs without emails, then the rest
+      sorted.sort((a, b) => {
+        const aEmailPIs = a.contacts.filter((c) => c.isPrincipalInvestigator && c.contactEmail).length;
+        const bEmailPIs = b.contacts.filter((c) => c.isPrincipalInvestigator && c.contactEmail).length;
+        if (bEmailPIs !== aEmailPIs) return bEmailPIs - aEmailPIs;
+        const aPIs = a.contacts.filter((c) => c.isPrincipalInvestigator).length;
+        const bPIs = b.contacts.filter((c) => c.isPrincipalInvestigator).length;
+        if (bPIs !== aPIs) return bPIs - aPIs;
+        const aEmails = a.contacts.filter((c) => c.contactEmail).length;
+        const bEmails = b.contacts.filter((c) => c.contactEmail).length;
+        return bEmails - aEmails;
+      });
+      break;
+    case 'pi-first':
+      sorted.sort((a, b) =>
+        b.contacts.filter((c) => c.isPrincipalInvestigator).length -
+        a.contacts.filter((c) => c.isPrincipalInvestigator).length
+      );
+      break;
+    case 'has-email':
+      sorted.sort((a, b) =>
+        b.contacts.filter((c) => c.contactEmail).length -
+        a.contacts.filter((c) => c.contactEmail).length
+      );
+      break;
+    case 'most-contacts':
+      sorted.sort((a, b) => b.contacts.length - a.contacts.length);
+      break;
+    case 'facility-az':
+      sorted.sort((a, b) => (a.facility || 'zzz').localeCompare(b.facility || 'zzz'));
+      break;
+    case 'condition-az':
+      sorted.sort((a, b) => (a.conditions || 'zzz').localeCompare(b.conditions || 'zzz'));
+      break;
+    case 'sponsor-az':
+      sorted.sort((a, b) => (a.sponsor || 'zzz').localeCompare(b.sponsor || 'zzz'));
+      break;
+  }
+  return sorted;
+}
+
 interface ResultsTableProps {
   contacts: ContactRow[];
   totalStudies: number;
   searchedLocation: string;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
+  distance: number;
 }
 
 // ── status badge ──────────────────────────────────────────────────────────────
@@ -131,7 +188,7 @@ function LocationCard({ group }: { group: LocationGroup }) {
             <Badge className={`text-[10px] h-5 px-2 font-semibold ${statusClass(group.status)}`}>
               {statusLabel(group.status)}
             </Badge>
-            {group.phase && (
+            {group.phase && group.phase.toUpperCase() !== 'NA' && (
               <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
                 {group.phase}
               </span>
@@ -152,23 +209,18 @@ function LocationCard({ group }: { group: LocationGroup }) {
         </a>
       </div>
 
-      {/* Location row */}
-      <div className="px-4 py-2.5 border-b flex items-center gap-2 bg-muted/10">
-        {group.isCentral
-          ? <Globe size={14} className="text-muted-foreground shrink-0" />
-          : <Building2 size={14} className="text-muted-foreground shrink-0" />
-        }
-        <div className="min-w-0">
-          {group.isCentral ? (
-            <span className="text-xs text-muted-foreground italic">Study-wide contact (no specific site)</span>
-          ) : (
+      {/* Site location row */}
+      <div className="px-4 py-2.5 border-b flex items-center gap-3 bg-muted/10">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground shrink-0">Site</span>
+        <Building2 size={14} className="text-muted-foreground shrink-0" />
+        <div className="min-w-0 flex items-center gap-1.5">
+          {group.facility && (
+            <span className="text-sm font-medium text-foreground">{group.facility}</span>
+          )}
+          {locationLine && (
             <>
-              {group.facility && (
-                <span className="text-sm font-medium text-foreground">{group.facility}</span>
-              )}
-              {locationLine && (
-                <span className="text-xs text-muted-foreground ml-1.5">{locationLine}</span>
-              )}
+              <span className="text-muted-foreground">—</span>
+              <span className="text-xs text-muted-foreground">{locationLine}</span>
             </>
           )}
         </div>
@@ -262,33 +314,49 @@ function StatChip({
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function ResultsTable({
-  contacts, totalStudies, searchedLocation, hasMore, loadingMore, onLoadMore,
+  contacts, totalStudies, searchedLocation, distance,
 }: ResultsTableProps) {
   const [emailOnly, setEmailOnly] = useState(false);
   const [piOnly, setPiOnly]       = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy]       = useState<SortOption>('outreach');
   const [page, setPage]           = useState(1);
   const [copied, setCopied]       = useState(false);
 
-  useEffect(() => { setPage(1); }, [emailOnly, piOnly]);
+  useEffect(() => { setPage(1); }, [emailOnly, piOnly, searchQuery, sortBy]);
 
   // Filter flat contacts (for export + stats)
   const filtered = useMemo(() => {
     let rows = contacts;
     if (emailOnly) rows = rows.filter((r) => r.contactEmail);
     if (piOnly)    rows = rows.filter((r) => r.isPrincipalInvestigator);
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      rows = rows.filter((r) =>
+        r.contactName.toLowerCase().includes(q) ||
+        r.studyTitle.toLowerCase().includes(q) ||
+        r.facility.toLowerCase().includes(q) ||
+        r.conditions.toLowerCase().includes(q) ||
+        r.sponsor.toLowerCase().includes(q) ||
+        r.nctId.toLowerCase().includes(q)
+      );
+    }
     return rows;
-  }, [contacts, emailOnly, piOnly]);
+  }, [contacts, emailOnly, piOnly, searchQuery]);
 
-  // Group filtered contacts into location cards
-  const groups = useMemo(() => groupContacts(filtered), [filtered]);
+  // Group filtered contacts into location cards, then sort
+  const groups = useMemo(
+    () => sortGroups(groupContacts(filtered), sortBy),
+    [filtered, sortBy],
+  );
 
   const totalPages = Math.max(1, Math.ceil(groups.length / PAGE_SIZE));
   const safePage   = Math.min(page, totalPages);
   const pageGroups = groups.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
   const isLastPage = safePage === totalPages;
 
-  const withEmail = contacts.filter((c) => c.contactEmail).length;
-  const piCount   = contacts.filter((c) => c.isPrincipalInvestigator).length;
+  const piCount       = contacts.filter((c) => c.isPrincipalInvestigator).length;
+  const pisWithEmail  = contacts.filter((c) => c.isPrincipalInvestigator && c.contactEmail).length;
 
   async function handleCopyAll() {
     await copyToClipboard(filtered);
@@ -302,20 +370,57 @@ export default function ResultsTable({
       <div className="rounded-xl border bg-card p-4 flex flex-wrap items-center justify-between gap-4">
         {/* Location + stats */}
         <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <MapPin size={13} />
-            <span>{searchedLocation}</span>
+          <div className="flex items-center gap-1.5 text-sm">
+            <MapPin size={13} className="text-primary" />
+            <span className="text-foreground font-medium">{searchedLocation}</span>
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/20">
+              {distance} {distance === 1 ? 'mile' : 'miles'}
+            </span>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <StatChip value={contacts.length} label="contacts" />
-            <StatChip value={totalStudies} label="trials" />
-            <StatChip value={withEmail} label="with email" icon={<Mail size={11} />} highlight />
             <StatChip value={piCount} label="PIs" dot />
+            <StatChip value={pisWithEmail} label="PIs with email" icon={<Mail size={11} />} highlight />
           </div>
         </div>
 
-        {/* Right: filters + export */}
+        {/* Right: search + filters + export */}
         <div className="flex items-center gap-3 flex-wrap">
+          {/* Search within results */}
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search results…"
+              className="h-8 w-48 pl-8 pr-7 rounded-md border bg-background text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+
+          {/* Sort dropdown */}
+          <div className="relative">
+            <ArrowUpDown size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortOption)}
+              className="h-8 pl-8 pr-3 rounded-md border bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer appearance-none"
+            >
+              {Object.entries(SORT_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          <Separator orientation="vertical" className="h-6" />
+
           {/* Toggle filters */}
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
@@ -372,25 +477,15 @@ export default function ResultsTable({
             </span>
             <Button
               variant="outline" size="icon"
-              disabled={isLastPage && !hasMore}
-              onClick={() => {
-                if (safePage < totalPages) {
-                  setPage((p) => p + 1);
-                } else if (hasMore) {
-                  onLoadMore();
-                  setPage((p) => p + 1);
-                }
-              }}
+              disabled={isLastPage}
+              onClick={() => setPage((p) => p + 1)}
               className="h-8 w-8 cursor-pointer"
             >
-              {isLastPage && loadingMore
-                ? <Loader2 size={14} className="animate-spin" />
-                : <ChevronRight size={14} />}
+              <ChevronRight size={14} />
             </Button>
           </div>
           <span className="text-xs text-muted-foreground">
             {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, groups.length)} of {groups.length} sites
-            {hasMore && ' (more available)'}
           </span>
         </div>
       )}
