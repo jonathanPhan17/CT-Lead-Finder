@@ -2,10 +2,11 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Copy, Download, Check, Mail, Search, X, ArrowUpDown,
   ExternalLink, ChevronLeft, ChevronRight, Building2,
-  MapPin,
+  MapPin, SquarePen,
 } from 'lucide-react';
 import OutreachComposer from './OutreachComposer';
 import OutreachCart from './OutreachCart';
+import ManualComposer from './ManualComposer';
 import { getContactedEmails } from '../services/outreachHistory';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -370,17 +371,23 @@ export default function ResultsTable({
   const [copied, setCopied]       = useState(false);
 
   // Outreach selection
-  const [selectedIds, setSelectedIds]     = useState<Set<string>>(new Set());
-  const [showComposer, setShowComposer]   = useState(false);
+  const [selectedIds, setSelectedIds]       = useState<Set<string>>(new Set());
+  const [showComposer, setShowComposer]       = useState(false);
+  const [showManualComposer, setShowManualComposer] = useState(false);
   const [contactedEmails, setContactedEmails] = useState<Set<string>>(getContactedEmails);
 
   useEffect(() => { setPage(1); }, [emailOnly, piOnly, searchQuery, sortBy]);
 
-  // Refresh contacted emails whenever composer closes (new sends may have been added)
+  // Refresh contacted emails whenever a composer closes (new sends may have been added)
   const handleComposerClose = useCallback(() => {
     setShowComposer(false);
     setContactedEmails(getContactedEmails());
     setSelectedIds(new Set());
+  }, []);
+
+  const handleManualClose = useCallback(() => {
+    setShowManualComposer(false);
+    setContactedEmails(getContactedEmails());
   }, []);
 
   // Filter flat contacts (for export + stats)
@@ -526,6 +533,9 @@ export default function ResultsTable({
             <Button size="sm" onClick={() => downloadCSV(filtered)} className="cursor-pointer">
               <Download size={13} />Download CSV
             </Button>
+            <Button variant="outline" size="sm" onClick={() => setShowManualComposer(true)} className="cursor-pointer">
+              <SquarePen size={13} />Compose
+            </Button>
           </div>
 
           {allWithEmail.length > 0 && (
@@ -603,6 +613,10 @@ export default function ResultsTable({
 
       {showComposer && selectedContacts.length > 0 && (
         <OutreachComposer contacts={selectedContacts} onClose={handleComposerClose} />
+      )}
+
+      {showManualComposer && (
+        <ManualComposer onClose={handleManualClose} />
       )}
     </div>
   );

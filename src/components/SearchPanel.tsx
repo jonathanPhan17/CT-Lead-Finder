@@ -91,7 +91,6 @@ export default function SearchPanel({
               value={location}
               onChange={setLocation}
               placeholder="e.g. Massachusetts General Hospital, Boston, MA"
-              autoFocus
               inputClassName="h-11 text-sm"
             />
 
