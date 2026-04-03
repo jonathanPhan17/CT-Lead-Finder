@@ -374,20 +374,24 @@ export default function ResultsTable({
   const [selectedIds, setSelectedIds]       = useState<Set<string>>(new Set());
   const [showComposer, setShowComposer]       = useState(false);
   const [showManualComposer, setShowManualComposer] = useState(false);
-  const [contactedEmails, setContactedEmails] = useState<Set<string>>(getContactedEmails);
+  const [contactedEmails, setContactedEmails] = useState<Set<string>>(new Set());
 
   useEffect(() => { setPage(1); }, [emailOnly, piOnly, searchQuery, sortBy]);
 
+  useEffect(() => {
+    getContactedEmails().then(setContactedEmails).catch(() => {});
+  }, []);
+
   // Refresh contacted emails whenever a composer closes (new sends may have been added)
-  const handleComposerClose = useCallback(() => {
+  const handleComposerClose = useCallback(async () => {
     setShowComposer(false);
-    setContactedEmails(getContactedEmails());
+    setContactedEmails(await getContactedEmails());
     setSelectedIds(new Set());
   }, []);
 
-  const handleManualClose = useCallback(() => {
+  const handleManualClose = useCallback(async () => {
     setShowManualComposer(false);
-    setContactedEmails(getContactedEmails());
+    setContactedEmails(await getContactedEmails());
   }, []);
 
   // Filter flat contacts (for export + stats)

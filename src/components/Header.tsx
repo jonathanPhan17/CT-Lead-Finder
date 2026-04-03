@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { Moon, Sun, FlaskConical, Clock, Search } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -11,7 +12,11 @@ interface HeaderProps {
 
 export default function Header({ isDark, onToggleTheme }: HeaderProps) {
   const location  = useLocation();
-  const historyCount = getHistory().length;
+  const [historyCount, setHistoryCount] = useState(0);
+
+  useEffect(() => {
+    getHistory().then((r) => setHistoryCount(r.length)).catch(() => {});
+  }, [location.pathname]);
 
   // Remember the last search URL so the Search nav link returns to it
   if (location.pathname === '/' && location.search) {

@@ -57,8 +57,6 @@ export default function ManualComposer({ onClose }: Props) {
     setSending(true);
     setSendError(null);
     try {
-      await sendGmailMessage(accessToken, to.trim(), subject.trim(), body.trim());
-
       const record: OutreachRecord = {
         id:           `${Date.now()}-manual`,
         sentAt:       new Date().toISOString(),
@@ -72,7 +70,9 @@ export default function ManualComposer({ onClose }: Props) {
         status:       'no_reply',
         notes:        '',
       };
-      saveRecord(record);
+
+      await sendGmailMessage(accessToken, to.trim(), subject.trim(), body.trim(), record.id);
+      await saveRecord(record);
       setSent(true);
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Failed to send email');

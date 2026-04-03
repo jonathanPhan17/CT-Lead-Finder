@@ -1,6 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient,
+  GetCommand,
   QueryCommand,
   PutCommand,
   UpdateCommand,
@@ -69,6 +70,28 @@ export async function deleteRecord(id: string): Promise<void> {
     TableName: Resource.OutreachRecords.name,
     Key: { pk: PK, sk: id },
   }));
+}
+
+// ── open tracking ─────────────────────────────────────────────────────────────
+
+export async function recordOpen(id: string): Promise<void> {
+  await client.send(new UpdateCommand({
+    TableName: Resource.OutreachRecords.name,
+    Key: { pk: PK, sk: id },
+    UpdateExpression: 'SET openedAt = if_not_exists(openedAt, :now)',
+    ExpressionAttributeValues: { ':now': new Date().toISOString() },
+  }));
+}
+
+// ── get single record ─────────────────────────────────────────────────────────
+
+export async function getRecord(id: string): Promise<OutreachRecordPublic | null> {
+  const result = await client.send(new GetCommand({
+    TableName: Resource.OutreachRecords.name,
+    Key: { pk: PK, sk: id },
+  }));
+  if (!result.Item) return null;
+  return toPublic(result.Item as OutreachRecord);
 }
 
 // ── by status (for webhook — find no_reply records) ───────────────────────────

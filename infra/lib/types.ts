@@ -19,6 +19,7 @@ export interface OutreachRecord {
   bodyPreview:  string;
   status:       OutreachStatus;
   notes:        string;
+  openedAt?:        string;
   replySubject?:    string;
   replyBody?:       string;
   replyReceivedAt?: string;

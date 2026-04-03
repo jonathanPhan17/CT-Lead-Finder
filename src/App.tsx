@@ -8,7 +8,6 @@ import ResultsTable from './components/ResultsTable';
 import OutreachHistory from './components/OutreachHistory';
 import { geocodeLocation } from './services/geocoding';
 import { searchTrials } from './services/clinicalTrials';
-import { getHistory } from './services/outreachHistory';
 import type { ContactRow } from './types';
 
 function getInitialTheme(): boolean {
@@ -277,7 +276,7 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-10 space-y-8">
         <Routes>
           <Route path="/" element={searchPage} />
-          <Route path="/history" element={<OutreachHistory initialRecords={getHistory()} />} />
+          <Route path="/history" element={<OutreachHistory />} />
         </Routes>
       </main>
     </div>

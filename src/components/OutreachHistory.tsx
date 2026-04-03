@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Search, Trash2, X,
   Mail, Building2, ExternalLink, FileText, Download, ChevronDown, ChevronUp,
@@ -6,7 +6,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import type { OutreachRecord, OutreachStatus } from '../types';
-import { updateRecord, deleteRecord, clearHistory } from '../services/outreachHistory';
+import { getHistory, updateRecord, deleteRecord, clearHistory } from '../services/outreachHistory';
 
 // ── status config ──────────────────────────────────────────────────────────────
 
@@ -109,6 +109,12 @@ function HistoryRow({
               <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
               {cfg.label}
             </span>
+            {record.openedAt && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ring-1 bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400 ring-purple-200 dark:ring-purple-700">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                Opened
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-1.5 mt-1 text-xs text-muted-foreground flex-wrap">
             <Mail size={11} />
@@ -204,6 +210,26 @@ function HistoryRow({
             </div>
           )}
 
+          {/* Reply received */}
+          {record.replyReceivedAt && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Reply received</p>
+              <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3 space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  {formatDate(record.replyReceivedAt)}
+                  {record.replySubject && (
+                    <> · Subject: <span className="text-foreground font-medium">{record.replySubject}</span></>
+                  )}
+                </p>
+                {record.replyBody && (
+                  <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">
+                    {record.replyBody}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Notes */}
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -226,14 +252,39 @@ function HistoryRow({
 
 // ── main component ─────────────────────────────────────────────────────────────
 
-interface Props {
-  initialRecords: OutreachRecord[];
-}
-
-export default function OutreachHistory({ initialRecords }: Props) {
-  const [records, setRecords]   = useState<OutreachRecord[]>(initialRecords);
+export default function OutreachHistory() {
+  const [records, setRecords]   = useState<OutreachRecord[]>([]);
+  const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState('');
   const [filterStatus, setFilterStatus] = useState<OutreachStatus | 'all'>('all');
+
+  useEffect(() => {
+    let alive = true;
+
+    const fetchRecords = () => {
+      getHistory()
+        .then((r) => { if (alive) setRecords(r); })
+        .catch(() => {})
+        .finally(() => { if (alive) setLoading(false); });
+    };
+
+    fetchRecords();
+
+    // Re-fetch every 30 seconds while the page is open
+    const interval = setInterval(fetchRecords, 30_000);
+
+    // Also re-fetch immediately when the user switches back to this tab
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') fetchRecords();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      alive = false;
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
 
   const filtered = useMemo(() => {
     let r = records;
@@ -258,25 +309,37 @@ export default function OutreachHistory({ initialRecords }: Props) {
     interested: records.filter((r) => r.status === 'interested').length,
   }), [records]);
 
-  function handleStatusChange(id: string, status: OutreachStatus) {
-    updateRecord(id, { status });
+  async function handleStatusChange(id: string, status: OutreachStatus) {
     setRecords((prev) => prev.map((r) => r.id === id ? { ...r, status } : r));
+    await updateRecord(id, { status });
   }
 
-  function handleNotesChange(id: string, notes: string) {
-    updateRecord(id, { notes });
+  async function handleNotesChange(id: string, notes: string) {
     setRecords((prev) => prev.map((r) => r.id === id ? { ...r, notes } : r));
+    await updateRecord(id, { notes });
   }
 
-  function handleDelete(id: string) {
-    deleteRecord(id);
+  async function handleDelete(id: string) {
     setRecords((prev) => prev.filter((r) => r.id !== id));
+    await deleteRecord(id);
   }
 
-  function handleClearAll() {
+  async function handleClearAll() {
     if (!confirm('Clear all outreach history? This cannot be undone.')) return;
-    clearHistory();
     setRecords([]);
+    await clearHistory();
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-muted-foreground">
+        <span className="flex gap-1">
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />
+          ))}
+        </span>
+      </div>
+    );
   }
 
   return (

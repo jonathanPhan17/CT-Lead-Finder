@@ -120,7 +120,10 @@ export default function OutreachComposer({ contacts, onClose }: Props) {
   const abortRef   = useRef(false);
 
   // Contacts that have already been emailed
-  const contactedEmails = useRef(getContactedEmails());
+  const contactedEmails = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    getContactedEmails().then((s) => { contactedEmails.current = s; }).catch(() => {});
+  }, []);
 
   // Clamp preview index
   const previewContact = contacts[Math.min(previewIdx, contacts.length - 1)];
@@ -172,9 +175,6 @@ export default function OutreachComposer({ contacts, onClose }: Props) {
       const renderedBody    = applyVariables(body,    contact, personalize);
 
       try {
-        await sendGmailMessage(accessToken, contact.contactEmail, renderedSubject, renderedBody);
-
-        // Save to history
         const record: OutreachRecord = {
           id:           `${Date.now()}-${i}`,
           sentAt:       new Date().toISOString(),
@@ -188,7 +188,9 @@ export default function OutreachComposer({ contacts, onClose }: Props) {
           status:       'no_reply',
           notes:        '',
         };
-        saveRecord(record);
+
+        await sendGmailMessage(accessToken, contact.contactEmail, renderedSubject, renderedBody, record.id);
+        await saveRecord(record);
 
         setResults((prev) => prev.map((r, idx) => idx === i ? { ...r, status: 'sent' } : r));
       } catch (err) {

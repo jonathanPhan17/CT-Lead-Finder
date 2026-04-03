@@ -16,6 +16,7 @@ dist-ssr
 # SST
 .sst
 infra/.sst
+infra/.env
 
 # AWS
 .aws-sam

@@ -39,8 +39,30 @@ export default $config({
     api.route('PUT /records/{id}',   { handler: 'api/records/update.handler', link: [table] });
     api.route('DELETE /records/{id}',{ handler: 'api/records/delete.handler', link: [table] });
 
-    // Gmail webhook
-    api.route('POST /webhook/gmail', { handler: 'api/webhook/gmail.handler',  link: [table] });
+    // Open tracking pixel
+    api.route('GET /track/{id}/open', { handler: 'api/track/open.handler', link: [table] });
+
+    // Gmail OAuth — exchange authorization code, store refresh token, start watch
+    const gmailEnv = {
+      GOOGLE_CLIENT_ID:     process.env.GOOGLE_CLIENT_ID     ?? '',
+      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ?? '',
+      GMAIL_PUBSUB_TOPIC:   process.env.GMAIL_PUBSUB_TOPIC   ?? '',
+    };
+
+    api.route('POST /auth/gmail',    { handler: 'api/auth/gmail.handler',    link: [table], environment: gmailEnv });
+
+    // Gmail webhook (Pub/Sub push)
+    api.route('POST /webhook/gmail', { handler: 'api/webhook/gmail.handler', link: [table], environment: gmailEnv });
+
+    // ── Reply checker cron (every 10 minutes) ─────────────────────────────────
+    new sst.aws.Cron('CheckRepliesCron', {
+      schedule: 'rate(2 minutes)',
+      job: {
+        handler:     'api/cron/checkReplies.handler',
+        link:        [table],
+        environment: gmailEnv,
+      },
+    });
 
     // ── Outputs ───────────────────────────────────────────────────────────────
     return {
