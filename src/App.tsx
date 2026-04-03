@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useLocation, Routes, Route } from 'react-router-dom';
 import axios from 'axios';
 import { AlertCircle, X, MapPin, FlaskConical } from 'lucide-react';
 import Header from './components/Header';
 import SearchPanel from './components/SearchPanel';
 import ResultsTable from './components/ResultsTable';
+import OutreachHistory from './components/OutreachHistory';
 import { geocodeLocation } from './services/geocoding';
 import { searchTrials } from './services/clinicalTrials';
+import { getHistory } from './services/outreachHistory';
 import type { ContactRow } from './types';
 
 function getInitialTheme(): boolean {
@@ -81,28 +83,32 @@ function LoadingSkeleton({ step }: { step: LoadingStep }) {
 export default function App() {
   const [isDark, setIsDark] = useState(getInitialTheme);
   const [searchParams, setSearchParams] = useSearchParams();
+  const { pathname } = useLocation();
 
   const urlLocation = searchParams.get('loc') ?? '';
   const urlDistance = Number(searchParams.get('dist') ?? 1);
 
   // hasSearched is set immediately on click — doesn't wait for URL or API
-  const [hasSearched, setHasSearched] = useState(!!urlLocation);
+  // Also derived from urlLocation so navigating back never flashes the homepage
+  const [_hasSearched, setHasSearched] = useState(!!urlLocation);
+  const hasSearched = _hasSearched || !!urlLocation;
   const [loadingStep, setLoadingStep] = useState<LoadingStep>(null);
   const [contacts, setContacts] = useState<ContactRow[]>([]);
-  const [totalStudies, setTotalStudies] = useState(0);
+  const [, setTotalStudies] = useState(0);
   const [fetchProgress, setFetchProgress] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [searchedLocation, setSearchedLocation] = useState(urlLocation);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Sync hasSearched back to false when URL clears (browser back to /)
+  // Only clear state when on / with no params (e.g. browser back to root)
+  // Don't clear when navigating to /history — contacts should persist
   useEffect(() => {
-    if (!urlLocation) {
+    if (!urlLocation && pathname === '/') {
       setHasSearched(false);
       setContacts([]);
       setError(null);
     }
-  }, [urlLocation]);
+  }, [urlLocation, pathname]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -110,8 +116,30 @@ export default function App() {
     localStorage.setItem('ct-theme', isDark ? 'dark' : 'light');
   }, [isDark]);
 
+  function readCache(key: string): ContactRow[] | null {
+    try {
+      const raw = sessionStorage.getItem(key);
+      return raw ? JSON.parse(raw) as ContactRow[] : null;
+    } catch { return null; }
+  }
+
+  function writeCache(key: string, contacts: ContactRow[]) {
+    try { sessionStorage.setItem(key, JSON.stringify(contacts)); } catch { /* quota exceeded */ }
+  }
+
   const runSearch = useCallback(
     async (location: string, distance: number) => {
+      const cacheKey = `ct-cache|${location}|${distance}`;
+
+      // Return cached results instantly if available
+      const cached = readCache(cacheKey);
+      if (cached) {
+        setContacts(cached);
+        setSearchedLocation(location);
+        setHasSearched(true);
+        return;
+      }
+
       // Abort any in-flight search
       abortRef.current?.abort();
       const controller = new AbortController();
@@ -139,21 +167,17 @@ export default function App() {
             controller.signal,
           );
 
-          // Dedupe against already-collected contacts
           const existingIds = new Set(allContacts.map((c) => c.id));
           const newContacts = result.contacts.filter((c) => !existingIds.has(c.id));
           allContacts = [...allContacts, ...newContacts];
           for (const id of result.studyIds) allStudyIds.add(id);
 
-          // Update UI progressively so user sees results arriving
           setContacts(allContacts);
           setTotalStudies(allStudyIds.size);
 
           pageToken = result.nextPageToken;
           page++;
 
-          // Stop early if this page had zero in-radius studies
-          // (API is returning results outside our search area)
           if (result.studyIds.length === 0) break;
 
           if (pageToken) {
@@ -161,6 +185,7 @@ export default function App() {
           }
         } while (pageToken && page < MAX_PAGES);
 
+        writeCache(cacheKey, allContacts);
         setFetchProgress('');
       } catch (err: unknown) {
         if (axios.isCancel(err)) return;
@@ -188,64 +213,72 @@ export default function App() {
 
   const isLoading = loadingStep !== null;
 
+  const searchPage = (
+    <>
+      {hasSearched ? (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-4">
+          <SearchPanel
+            loading={isLoading}
+            compact
+            initialLocation={urlLocation}
+            initialDistance={urlDistance}
+            onSearch={handleSearch}
+          />
+        </div>
+      ) : (
+        <div className="py-12">
+          <SearchPanel loading={isLoading} onSearch={handleSearch} />
+        </div>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400">
+          <AlertCircle size={18} className="mt-0.5 shrink-0" />
+          <p className="text-sm flex-1">{error}</p>
+          <button
+            onClick={() => setError(null)}
+            className="text-red-400 hover:text-red-600 dark:hover:text-red-300 cursor-pointer"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {isLoading && <LoadingSkeleton step={loadingStep} />}
+
+      {fetchProgress && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <FlaskConical size={14} className="animate-pulse" />
+          <span>{fetchProgress}</span>
+        </div>
+      )}
+
+      {hasSearched && contacts.length > 0 && (
+        <ResultsTable
+          contacts={contacts}
+          searchedLocation={searchedLocation}
+          distance={urlDistance}
+        />
+      )}
+
+      {!isLoading && hasSearched && !error && contacts.length === 0 && (
+        <div className="text-center py-20 text-muted-foreground">
+          <p className="text-lg font-medium mb-1">No contacts found</p>
+          <p className="text-sm">Try a different location or a larger radius.</p>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
       <Header isDark={isDark} onToggleTheme={() => setIsDark((v) => !v)} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-10 space-y-8">
-        {hasSearched ? (
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-4">
-            <SearchPanel
-              loading={isLoading}
-              compact
-              initialLocation={urlLocation}
-              initialDistance={urlDistance}
-              onSearch={handleSearch}
-            />
-          </div>
-        ) : (
-          <div className="py-12">
-            <SearchPanel loading={isLoading} onSearch={handleSearch} />
-          </div>
-        )}
-
-        {error && (
-          <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400">
-            <AlertCircle size={18} className="mt-0.5 shrink-0" />
-            <p className="text-sm flex-1">{error}</p>
-            <button
-              onClick={() => setError(null)}
-              className="text-red-400 hover:text-red-600 dark:hover:text-red-300 cursor-pointer"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        )}
-
-        {isLoading && <LoadingSkeleton step={loadingStep} />}
-
-        {fetchProgress && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <FlaskConical size={14} className="animate-pulse" />
-            <span>{fetchProgress}</span>
-          </div>
-        )}
-
-        {hasSearched && contacts.length > 0 && (
-          <ResultsTable
-            contacts={contacts}
-            totalStudies={totalStudies}
-            searchedLocation={searchedLocation}
-            distance={urlDistance}
-          />
-        )}
-
-        {!isLoading && hasSearched && !error && contacts.length === 0 && (
-          <div className="text-center py-20 text-muted-foreground">
-            <p className="text-lg font-medium mb-1">No contacts found</p>
-            <p className="text-sm">Try a different location or a larger radius.</p>
-          </div>
-        )}
+        <Routes>
+          <Route path="/" element={searchPage} />
+          <Route path="/history" element={<OutreachHistory initialRecords={getHistory()} />} />
+        </Routes>
       </main>
     </div>
   );

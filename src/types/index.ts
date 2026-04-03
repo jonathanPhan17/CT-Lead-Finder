@@ -26,3 +26,19 @@ export interface ContactRow {
 
 export type SortKey = keyof ContactRow;
 export type SortDir = 'asc' | 'desc';
+
+export type OutreachStatus = 'no_reply' | 'replied' | 'interested' | 'not_interested' | 'wrong_contact';
+
+export interface OutreachRecord {
+  id: string;
+  sentAt: string;
+  contactName: string;
+  contactEmail: string;
+  nctId: string;
+  trialTitle: string;
+  facility: string;
+  subject: string;
+  bodyPreview: string;
+  status: OutreachStatus;
+  notes: string;
+}

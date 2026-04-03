@@ -25,7 +25,7 @@ interface SearchPanelProps {
 export default function SearchPanel({
   loading,
   compact = false,
-  initialLocation = '',
+  initialLocation = 'Massachusetts General Hospital, Boston, Massachusetts',
   initialDistance = 1,
   onSearch,
 }: SearchPanelProps) {

@@ -1,9 +1,12 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Copy, Download, Check, Mail, Search, X, ArrowUpDown,
-  ExternalLink, ChevronLeft, ChevronRight, Building2, Globe,
+  ExternalLink, ChevronLeft, ChevronRight, Building2,
   MapPin,
 } from 'lucide-react';
+import OutreachComposer from './OutreachComposer';
+import OutreachCart from './OutreachCart';
+import { getContactedEmails } from '../services/outreachHistory';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -73,7 +76,6 @@ function sortGroups(groups: LocationGroup[], sort: SortOption): LocationGroup[] 
 
 interface ResultsTableProps {
   contacts: ContactRow[];
-  totalStudies: number;
   searchedLocation: string;
   distance: number;
 }
@@ -174,9 +176,16 @@ function CopyEmailBtn({ email }: { email: string }) {
 
 // ── location card ─────────────────────────────────────────────────────────────
 
-function LocationCard({ group }: { group: LocationGroup }) {
-  const locationLine = [group.city, group.state, group.country].filter(Boolean).join(', ');
-  const piContacts   = group.contacts.filter((c) => c.isPrincipalInvestigator);
+interface LocationCardProps {
+  group: LocationGroup;
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  contactedEmails: Set<string>;
+}
+
+function LocationCard({ group, selectedIds, onToggle, contactedEmails }: LocationCardProps) {
+  const locationLine  = [group.city, group.state, group.country].filter(Boolean).join(', ');
+  const piContacts    = group.contacts.filter((c) => c.isPrincipalInvestigator);
   const otherContacts = group.contacts.filter((c) => !c.isPrincipalInvestigator);
 
   return (
@@ -228,15 +237,24 @@ function LocationCard({ group }: { group: LocationGroup }) {
 
       {/* Contacts */}
       <div className="divide-y divide-border">
-        {/* PIs first */}
         {piContacts.map((c) => (
-          <ContactRow key={c.id} contact={c} />
+          <ContactRow
+            key={c.id}
+            contact={c}
+            selected={selectedIds.has(c.id)}
+            onToggle={onToggle}
+            wasContacted={contactedEmails.has(c.contactEmail.toLowerCase())}
+          />
         ))}
-        {/* Other contacts */}
         {otherContacts.map((c) => (
-          <ContactRow key={c.id} contact={c} />
+          <ContactRow
+            key={c.id}
+            contact={c}
+            selected={selectedIds.has(c.id)}
+            onToggle={onToggle}
+            wasContacted={contactedEmails.has(c.contactEmail.toLowerCase())}
+          />
         ))}
-        {/* No contacts at all */}
         {group.contacts.length === 0 && (
           <div className="px-4 py-3 text-xs text-muted-foreground italic">No contact info listed.</div>
         )}
@@ -245,9 +263,32 @@ function LocationCard({ group }: { group: LocationGroup }) {
   );
 }
 
-function ContactRow({ contact: c }: { contact: ContactRow }) {
+interface ContactRowProps {
+  contact: ContactRow;
+  selected: boolean;
+  onToggle: (id: string) => void;
+  wasContacted: boolean;
+}
+
+function ContactRow({ contact: c, selected, onToggle, wasContacted }: ContactRowProps) {
   return (
-    <div className="px-4 py-3 flex items-start justify-between gap-4 hover:bg-muted/20 transition-colors">
+    <div
+      className={`px-4 py-3 flex items-start justify-between gap-4 hover:bg-muted/20 transition-colors ${selected ? 'bg-primary/5' : ''}`}
+    >
+      {/* Checkbox (only for contacts with email) */}
+      <div className="shrink-0 pt-0.5">
+        {c.contactEmail ? (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={() => onToggle(c.id)}
+            className="accent-primary w-4 h-4 cursor-pointer rounded"
+          />
+        ) : (
+          <span className="w-4 h-4 inline-block" />
+        )}
+      </div>
+
       {/* Left: name + role */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
@@ -258,6 +299,11 @@ function ContactRow({ contact: c }: { contact: ContactRow }) {
             <Badge className="text-[10px] h-4 px-1.5 bg-primary/10 text-primary border-transparent hover:bg-primary/10 font-semibold">
               PI
             </Badge>
+          )}
+          {wasContacted && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 font-medium">
+              Contacted
+            </span>
           )}
         </div>
         {c.contactRole && (
@@ -314,7 +360,7 @@ function StatChip({
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function ResultsTable({
-  contacts, totalStudies, searchedLocation, distance,
+  contacts, searchedLocation, distance,
 }: ResultsTableProps) {
   const [emailOnly, setEmailOnly] = useState(false);
   const [piOnly, setPiOnly]       = useState(false);
@@ -323,7 +369,19 @@ export default function ResultsTable({
   const [page, setPage]           = useState(1);
   const [copied, setCopied]       = useState(false);
 
+  // Outreach selection
+  const [selectedIds, setSelectedIds]     = useState<Set<string>>(new Set());
+  const [showComposer, setShowComposer]   = useState(false);
+  const [contactedEmails, setContactedEmails] = useState<Set<string>>(getContactedEmails);
+
   useEffect(() => { setPage(1); }, [emailOnly, piOnly, searchQuery, sortBy]);
+
+  // Refresh contacted emails whenever composer closes (new sends may have been added)
+  const handleComposerClose = useCallback(() => {
+    setShowComposer(false);
+    setContactedEmails(getContactedEmails());
+    setSelectedIds(new Set());
+  }, []);
 
   // Filter flat contacts (for export + stats)
   const filtered = useMemo(() => {
@@ -357,6 +415,31 @@ export default function ResultsTable({
 
   const piCount       = contacts.filter((c) => c.isPrincipalInvestigator).length;
   const pisWithEmail  = contacts.filter((c) => c.isPrincipalInvestigator && c.contactEmail).length;
+
+  // All contacts with emails (across all pages, for select-all)
+  const allWithEmail = useMemo(() => filtered.filter((c) => c.contactEmail), [filtered]);
+  const selectedContacts = useMemo(
+    () => allWithEmail.filter((c) => selectedIds.has(c.id)),
+    [allWithEmail, selectedIds],
+  );
+
+  const allSelected = allWithEmail.length > 0 && allWithEmail.every((c) => selectedIds.has(c.id));
+
+  function toggleContact(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allWithEmail.map((c) => c.id)));
+    }
+  }
 
   async function handleCopyAll() {
     await copyToClipboard(filtered);
@@ -444,6 +527,21 @@ export default function ResultsTable({
               <Download size={13} />Download CSV
             </Button>
           </div>
+
+          {allWithEmail.length > 0 && (
+            <>
+              <Separator orientation="vertical" className="h-6" />
+              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer select-none hover:text-foreground transition-colors">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  className="accent-primary w-4 h-4 cursor-pointer rounded"
+                />
+                Select all
+              </label>
+            </>
+          )}
         </div>
       </div>
 
@@ -455,7 +553,13 @@ export default function ResultsTable({
       ) : (
         <div className="space-y-3">
           {pageGroups.map((group) => (
-            <LocationCard key={group.key} group={group} />
+            <LocationCard
+              key={group.key}
+              group={group}
+              selectedIds={selectedIds}
+              onToggle={toggleContact}
+              contactedEmails={contactedEmails}
+            />
           ))}
         </div>
       )}
@@ -488,6 +592,17 @@ export default function ResultsTable({
             {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, groups.length)} of {groups.length} sites
           </span>
         </div>
+      )}
+
+      <OutreachCart
+        selected={selectedContacts}
+        onRemove={toggleContact}
+        onClear={() => setSelectedIds(new Set())}
+        onCompose={() => setShowComposer(true)}
+      />
+
+      {showComposer && selectedContacts.length > 0 && (
+        <OutreachComposer contacts={selectedContacts} onClose={handleComposerClose} />
       )}
     </div>
   );
