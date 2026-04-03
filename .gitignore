@@ -13,6 +13,13 @@ dist-ssr
 .env
 *.local
 
+# SST
+.sst
+infra/.sst
+
+# AWS
+.aws-sam
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
