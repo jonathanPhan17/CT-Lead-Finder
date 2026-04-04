@@ -1,7 +1,9 @@
 import axios from 'axios';
 import type { ContactRow } from '../types';
 
-const CT_V2_API = '/ct-proxy/api/v2/studies';
+const CT_V2_API = import.meta.env.DEV
+  ? '/ct-proxy/api/v2/studies'
+  : 'https://clinicaltrials.gov/api/v2/studies';
 
 // ── v2 API types ──────────────────────────────────────────────────────────────
 

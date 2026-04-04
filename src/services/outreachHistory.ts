@@ -1,4 +1,4 @@
-import type { OutreachRecord, OutreachStatus } from '../types';
+import type { OutreachRecord } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL as string;
 

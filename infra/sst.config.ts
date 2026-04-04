@@ -64,10 +64,27 @@ export default $config({
       },
     });
 
+    // ── Frontend (S3 + CloudFront) ────────────────────────────────────────────
+    const site = new sst.aws.StaticSite('Frontend', {
+      path: '../',
+      build: {
+        command: 'npm run build',
+        output:  'dist',
+      },
+      indexPage: 'index.html',
+      errorPage: 'index.html',  // SPA fallback — lets React Router handle routing
+      environment: {
+        VITE_API_URL:          api.url,
+        VITE_MAX_PAGES:        process.env.VITE_MAX_PAGES        ?? '20',
+        VITE_GOOGLE_CLIENT_ID: process.env.VITE_GOOGLE_CLIENT_ID ?? '',
+      },
+    });
+
     // ── Outputs ───────────────────────────────────────────────────────────────
     return {
       apiUrl:    api.url,
       tableName: table.name,
+      siteUrl:   site.url,
     };
   },
 });

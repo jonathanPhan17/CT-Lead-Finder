@@ -49,8 +49,12 @@ export async function fetchSuggestions(query: string, signal?: AbortSignal): Pro
     addressdetails: '1',
   });
 
+  const base = import.meta.env.DEV
+    ? '/nominatim-proxy'
+    : 'https://nominatim.openstreetmap.org';
+
   const response = await axios.get<NominatimResult[]>(
-    `/nominatim-proxy/search?${params}`,
+    `${base}/search?${params}`,
     { headers: { Accept: 'application/json' }, signal }
   );
 
@@ -70,8 +74,12 @@ export async function geocodeLocation(query: string, signal?: AbortSignal): Prom
     addressdetails: '0',
   });
 
+  const base = import.meta.env.DEV
+    ? '/nominatim-proxy'
+    : 'https://nominatim.openstreetmap.org';
+
   const response = await axios.get<NominatimResult[]>(
-    `/nominatim-proxy/search?${params}`,
+    `${base}/search?${params}`,
     { headers: { Accept: 'application/json' }, signal }
   );
 
