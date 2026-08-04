@@ -1,6 +1,6 @@
 # CT Lead Finder
 
-A React + TypeScript internal tool for finding Principal Investigator (PI) contact information from [ClinicalTrials.gov](https://clinicaltrials.gov) by location, and managing cold email outreach to clinical trial sites.
+A React + TypeScript tool for finding Principal Investigator (PI) contact information from [ClinicalTrials.gov](https://clinicaltrials.gov) by location, and managing cold email outreach to clinical trial sites.
 
 ## Features
 
@@ -57,6 +57,7 @@ Copy `.env.example` to `.env` and fill in your values:
 
 ```env
 VITE_GOOGLE_CLIENT_ID=your-google-oauth-client-id
+VITE_API_URL=your-outreach-history-api-url
 VITE_MAX_PAGES=20
 ```
 
