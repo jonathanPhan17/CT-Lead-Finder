@@ -1,114 +1,91 @@
 import { useState } from 'react';
-import { Trash2, Send, ChevronUp, ChevronDown } from 'lucide-react';
-import type { ContactRow } from '../types';
+import { ChevronDown, ChevronUp, Send, Trash2 } from 'lucide-react';
+import type { Recipient } from '@/search/resultsView';
 
 interface Props {
-  selected: ContactRow[];
-  onRemove: (id: string) => void;
+  recipients: Recipient[];
+  onRemove: (email: string) => void;
   onClear: () => void;
   onCompose: () => void;
 }
 
-export default function OutreachCart({ selected, onRemove, onClear, onCompose }: Props) {
-  const [open, setOpen] = useState(true);
-
-  if (selected.length === 0) return null;
-
-  const piCount    = selected.filter((c) => c.isPrincipalInvestigator).length;
-  const emailCount = selected.filter((c) => c.contactEmail).length;
+export default function OutreachCart({ recipients, onRemove, onClear, onCompose }: Props) {
+  // Starts collapsed: an open panel covers the results, and on a phone it covers the search form too.
+  const [open, setOpen] = useState(false);
+  if (recipients.length === 0) return null;
+  const piCount = recipients.filter((r) => r.isPI).length;
 
   return (
-    <div className="fixed bottom-6 right-6 z-30 flex flex-col items-end gap-2">
-
-      {/* Expanded cart panel */}
+    <div className="fixed right-4 bottom-4 z-30 flex flex-col items-end gap-2 sm:right-6 sm:bottom-6">
       {open && (
-        <div className="w-96 rounded-2xl overflow-hidden flex flex-col max-h-[75vh] shadow-2xl ring-2 ring-teal-500/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white">
-
-          {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-white/10">
+        <div className="flex max-h-[70vh] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl bg-white text-slate-900 shadow-2xl ring-2 ring-teal-500/50 dark:bg-slate-800 dark:text-white">
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-white/10">
             <div className="flex items-center gap-2.5">
               <Send size={16} className="text-teal-500" />
-              <span className="font-bold text-base">Outreach list</span>
+              <span className="text-base font-bold">Outreach list</span>
             </div>
-            <button
-              onClick={onClear}
-              className="flex items-center gap-1 text-xs text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
-            >
+            <button type="button" onClick={onClear} className="flex cursor-pointer items-center gap-1 text-xs text-slate-500 transition-colors hover:text-red-500">
               <Trash2 size={11} />
               Clear all
             </button>
           </div>
 
-          {/* Stats row */}
-          <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5 text-sm text-slate-500 dark:text-white/50">
-            <span><span className="font-bold text-slate-900 dark:text-white text-base">{selected.length}</span> contacts</span>
-            <span className="text-slate-300 dark:text-white/20">·</span>
-            <span><span className="font-bold text-teal-500 text-base">{piCount}</span> PI{piCount !== 1 ? 's' : ''}</span>
-            <span className="text-slate-300 dark:text-white/20">·</span>
-            <span><span className="font-bold text-slate-900 dark:text-white text-base">{emailCount}</span> with email</span>
+          <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-white/60">
+            {recipients.length} address{recipients.length === 1 ? '' : 'es'}, {piCount} belonging to a PI
           </div>
 
-          {/* Contact list */}
-          <div className="overflow-y-auto flex-1 divide-y divide-slate-100 dark:divide-white/5">
-            {selected.map((c) => (
-              <div
-                key={c.id}
-                className="flex items-start gap-3 px-5 py-3.5 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors group"
-              >
+          <ul className="flex-1 divide-y divide-slate-100 overflow-y-auto dark:divide-white/5">
+            {recipients.map((r) => (
+              <li key={r.email} className="flex items-start gap-3 px-5 py-3">
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-sm font-semibold truncate">{c.contactName}</span>
-                    {c.isPrincipalInvestigator && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-500/15 text-teal-600 dark:text-teal-400 font-semibold shrink-0">
-                        PI
-                      </span>
+                  <p className="flex items-center gap-1.5 text-sm font-semibold">
+                    <span className="truncate">{r.name ?? r.email}</span>
+                    {r.isPI && (
+                      <span className="shrink-0 rounded bg-teal-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-teal-600 dark:text-teal-400">PI</span>
                     )}
-                  </div>
-                  <p className="text-xs text-slate-400 truncate mt-0.5">{c.contactEmail}</p>
-                  <p className="text-xs text-slate-300 dark:text-white/25 truncate">{c.facility}</p>
+                  </p>
+                  {r.name && <p className="mt-0.5 truncate text-xs text-slate-500">{r.email}</p>}
+                  {r.trials.length > 0 && (
+                    <p className="truncate text-xs text-slate-400 dark:text-white/40">
+                      {r.trials[0].facility}
+                      {r.trials.length > 1 && ` and ${r.trials.length - 1} more trial${r.trials.length === 2 ? '' : 's'}`}
+                    </p>
+                  )}
                 </div>
                 <button
-                  onClick={() => onRemove(c.id)}
-                  className="mt-0.5 p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-400/10 transition-colors cursor-pointer opacity-0 group-hover:opacity-100 shrink-0"
-                  title="Remove"
+                  type="button"
+                  onClick={() => onRemove(r.email)}
+                  aria-label={`Remove ${r.email}`}
+                  className="mt-0.5 shrink-0 cursor-pointer rounded p-1 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-400/10"
                 >
                   <Trash2 size={13} />
                 </button>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
 
-          {/* Compose button */}
-          <div className="p-4 border-t border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5">
+          <div className="border-t border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-white/5">
             <button
+              type="button"
               onClick={onCompose}
-              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-teal-500 hover:bg-teal-400 text-white font-bold text-base transition-colors cursor-pointer shadow-lg shadow-teal-500/20"
+              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-teal-600 py-3 text-base font-bold text-white shadow-lg shadow-teal-500/20 transition-colors hover:bg-teal-500"
             >
               <Send size={16} />
-              Compose & Send
+              Compose email
             </button>
           </div>
         </div>
       )}
 
-      {/* Floating toggle button */}
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2.5 pl-5 pr-4 py-3 rounded-full bg-slate-900 dark:bg-slate-700 text-white ring-2 ring-teal-500/40 shadow-2xl hover:bg-slate-800 dark:hover:bg-slate-600 transition-all cursor-pointer text-sm font-semibold"
+        aria-expanded={open}
+        className="flex cursor-pointer items-center gap-2.5 rounded-full bg-slate-900 py-3 pr-4 pl-5 text-sm font-semibold text-white shadow-2xl ring-2 ring-teal-500/40 transition-all hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600"
       >
-        <span className="flex items-center justify-center w-6 h-6 rounded-full bg-teal-500 text-white text-xs font-bold shrink-0">
-          {selected.length}
-        </span>
+        <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-teal-500 px-1.5 text-xs font-bold">{recipients.length}</span>
         <span>Outreach list</span>
-        {piCount > 0 && (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-400 font-semibold">
-            {piCount} PI{piCount !== 1 ? 's' : ''}
-          </span>
-        )}
-        {open
-          ? <ChevronDown size={15} className="text-white/50" />
-          : <ChevronUp size={15} className="text-white/50" />
-        }
+        {open ? <ChevronDown size={15} className="text-white/50" /> : <ChevronUp size={15} className="text-white/50" />}
       </button>
     </div>
   );
