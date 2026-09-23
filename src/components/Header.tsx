@@ -1,72 +1,53 @@
-import { Moon, Sun, FlaskConical, Clock, Search } from 'lucide-react';
+import { Clock, FlaskConical, Moon, Search, Sun } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { getHistory } from '../services/outreachHistory';
+import { useHistory } from '@/outreach/historyStore';
 
 interface HeaderProps {
   isDark: boolean;
   onToggleTheme: () => void;
+  /** Where the Search tab leads: the last search the user ran, so switching tabs does not lose it. */
+  searchHref: string;
 }
 
-export default function Header({ isDark, onToggleTheme }: HeaderProps) {
-  const location  = useLocation();
-  const historyCount = getHistory().length;
+const tabClass = (active: boolean) =>
+  `flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors ${
+    active ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+  }`;
 
-  // Remember the last search URL so the Search nav link returns to it
-  if (location.pathname === '/' && location.search) {
-    sessionStorage.setItem('ct-last-search', location.pathname + location.search);
-  }
-  const lastSearch = sessionStorage.getItem('ct-last-search') ?? '/';
+export default function Header({ isDark, onToggleTheme, searchHref }: HeaderProps) {
+  const { pathname } = useLocation();
+  const history = useHistory();
+  const count = history.status === 'ready' ? history.records.length : 0;
 
   return (
     <header className="sticky top-0 z-20 bg-background/80 backdrop-blur-sm">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-        {/* Logo */}
-        <Link to="/" className="flex items-center gap-2.5 cursor-pointer">
-          <div className="w-7 h-7 rounded-lg bg-primary flex items-center justify-center">
+      <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-2 px-4 sm:px-6">
+        <Link to="/" className="flex shrink-0 items-center gap-2.5">
+          <div className="flex size-7 items-center justify-center rounded-lg bg-primary">
             <FlaskConical size={15} className="text-primary-foreground" />
           </div>
-          <span className="font-semibold tracking-tight">CT Lead Finder</span>
+          <span className="hidden font-semibold tracking-tight sm:inline">CT Lead Finder</span>
         </Link>
 
-        {/* Nav */}
-        <div className="flex items-center gap-1">
-          <Link
-            to={lastSearch}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors cursor-pointer ${
-              location.pathname === '/'
-                ? 'bg-muted text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-            }`}
-          >
+        <nav className="flex items-center gap-1">
+          <Link to={searchHref} className={tabClass(pathname === '/')}>
             <Search size={14} />
             Search
           </Link>
-
-          <Link
-            to="/history"
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors cursor-pointer ${
-              location.pathname === '/history'
-                ? 'bg-muted text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-            }`}
-          >
+          <Link to="/history" className={tabClass(pathname === '/history')}>
             <Clock size={14} />
-            Outreach History
-            {historyCount > 0 && (
-              <span className="ml-0.5 text-[11px] bg-primary/15 text-primary px-1.5 py-0.5 rounded-full font-semibold">
-                {historyCount}
-              </span>
+            History
+            {count > 0 && (
+              <span className="ml-0.5 rounded-full bg-primary/15 px-1.5 py-0.5 text-[11px] font-semibold text-primary">{count}</span>
             )}
           </Link>
-
-          <Separator orientation="vertical" className="h-5 mx-1" />
-
-          <Button variant="ghost" size="icon" onClick={onToggleTheme} aria-label="Toggle theme">
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <Button variant="ghost" size="icon" onClick={onToggleTheme} aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}>
             {isDark ? <Sun size={17} /> : <Moon size={17} />}
           </Button>
-        </div>
+        </nav>
       </div>
       <Separator />
     </header>

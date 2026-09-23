@@ -12,24 +12,5 @@ export default defineConfig({
   },
   server: {
     open: true,
-    proxy: {
-      '/nominatim-proxy': {
-        target: 'https://nominatim.openstreetmap.org',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/nominatim-proxy/, ''),
-        headers: {
-          'User-Agent': 'ClinicalTrialsLeadTool/1.0',
-          'Accept-Language': 'en',
-        },
-      },
-      '/ct-proxy': {
-        target: 'https://clinicaltrials.gov',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/ct-proxy/, ''),
-        headers: {
-          'Accept': 'application/json',
-        },
-      },
-    },
   },
 })

@@ -1,212 +1,193 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { X, Mail, Send, Loader2, Check, AlertCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertCircle, Check, Loader2, Mail, Send, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import type { OutreachRecord } from '../types';
-import { loadGisScript, requestGmailToken, sendGmailMessage } from '../services/gmail';
-import { saveRecord } from '../services/outreachHistory';
-
-const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+import { addRecord, useHistory } from '@/outreach/historyStore';
+import {
+  GMAIL_ERROR_MESSAGES,
+  gmailErrorKind,
+  isValidEmail,
+  loadGisScript,
+  readGoogleClientId,
+  requestGmailToken,
+  sendGmailMessage,
+  type GmailErrorKind,
+} from '@/services/gmail';
+import type { OutreachRecord } from '@/types';
 
 interface Props {
   onClose: () => void;
 }
 
+type Outcome = { kind: 'sent'; logged: boolean } | { kind: 'failed'; error: GmailErrorKind };
+
+const inputClass =
+  'h-9 w-full rounded-md border bg-background px-3 text-sm focus:ring-1 focus:ring-primary focus:outline-none aria-invalid:border-destructive disabled:opacity-60';
+
 export default function ManualComposer({ onClose }: Props) {
-  const [to,      setTo]      = useState('');
+  const history = useHistory();
+  const clientId = readGoogleClientId();
+  const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
-  const [body,    setBody]    = useState('');
+  const [body, setBody] = useState('');
+  const [token, setToken] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<GmailErrorKind | null>(null);
+  const [sending, setSending] = useState(false);
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [touched, setTouched] = useState(false);
 
-  const [accessToken,  setAccessToken]  = useState<string | null>(null);
-  const [gmailLoading, setGmailLoading] = useState(false);
-  const [gmailError,   setGmailError]   = useState<string | null>(null);
-
-  const [sending,   setSending]   = useState(false);
-  const [sent,      setSent]      = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
-
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const recipient = to.trim().toLowerCase();
+  const toInvalid = touched && recipient !== '' && !isValidEmail(recipient);
+  const sent = outcome?.kind === 'sent';
+  const alreadyContacted = recipient !== '' && history.contacted.has(recipient);
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !sending) onClose();
     };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [sending, onClose]);
 
-  const handleConnectGmail = useCallback(async () => {
-    if (!CLIENT_ID) {
-      setGmailError('VITE_GOOGLE_CLIENT_ID is not set in .env');
+  async function connect() {
+    if (!clientId) {
+      setConnectError('not_configured');
       return;
     }
-    setGmailLoading(true);
-    setGmailError(null);
+    setConnecting(true);
+    setConnectError(null);
     try {
       await loadGisScript();
-      const token = await requestGmailToken(CLIENT_ID);
-      setAccessToken(token);
+      setToken(await requestGmailToken(clientId));
     } catch (err) {
-      setGmailError(err instanceof Error ? err.message : 'Failed to connect Gmail');
+      setConnectError(gmailErrorKind(err));
     } finally {
-      setGmailLoading(false);
+      setConnecting(false);
     }
-  }, []);
+  }
 
-  const handleSend = useCallback(async () => {
-    if (!accessToken || !to.trim() || !subject.trim() || !body.trim()) return;
+  async function send() {
+    setTouched(true);
+    if (!token || !isValidEmail(recipient) || !subject.trim() || !body.trim()) return;
     setSending(true);
-    setSendError(null);
+    setOutcome(null);
     try {
-      await sendGmailMessage(accessToken, to.trim(), subject.trim(), body.trim());
-
-      const record: OutreachRecord = {
-        id:           `${Date.now()}-manual`,
-        sentAt:       new Date().toISOString(),
-        contactName:  to.trim(),
-        contactEmail: to.trim(),
-        nctId:        '',
-        trialTitle:   '',
-        facility:     '',
-        subject:      subject.trim(),
-        bodyPreview:  body.trim().slice(0, 150),
-        status:       'no_reply',
-        notes:        '',
-      };
-      saveRecord(record);
-      setSent(true);
+      await sendGmailMessage(token, recipient, subject.trim(), body.trim());
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : 'Failed to send email');
-    } finally {
+      const error = gmailErrorKind(err);
+      if (error === 'token_expired' || error === 'auth_failed') setToken(null);
+      setOutcome({ kind: 'failed', error });
       setSending(false);
+      return;
     }
-  }, [accessToken, to, subject, body]);
+    const record: OutreachRecord = {
+      id: crypto.randomUUID(),
+      sentAt: new Date().toISOString(),
+      contactName: '',
+      contactEmail: recipient,
+      nctId: '',
+      trialTitle: '',
+      facility: '',
+      subject: subject.trim(),
+      bodyPreview: body.trim().slice(0, 150),
+      status: 'no_reply',
+      notes: '',
+    };
+    let logged = history.status === 'off';
+    if (!logged) {
+      try {
+        await addRecord(record);
+        logged = true;
+      } catch {
+        logged = false;
+      }
+    }
+    setOutcome({ kind: 'sent', logged });
+    setSending(false);
+  }
 
   return (
     <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black/40 z-40"
-        onClick={() => !sending && onClose()}
-      />
-
-      {/* Modal */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-xl bg-background border border-border rounded-2xl shadow-2xl flex flex-col">
-
-          {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+      <div className="fixed inset-0 z-40 bg-black/40" onClick={() => !sending && onClose()} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="New email">
+        <div className="flex w-full max-w-xl flex-col rounded-2xl border border-border bg-background shadow-2xl">
+          <div className="flex shrink-0 items-center justify-between border-b px-5 py-4">
             <div className="flex items-center gap-2">
               <Mail size={17} className="text-primary" />
-              <h2 className="font-semibold text-base">New Email</h2>
+              <h2 className="text-base font-semibold">New email</h2>
             </div>
             {!sending && (
-              <button
-                onClick={onClose}
-                className="text-muted-foreground hover:text-foreground cursor-pointer p-1 rounded hover:bg-muted transition-colors"
-              >
+              <button type="button" onClick={onClose} aria-label="Close" className="cursor-pointer rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground">
                 <X size={17} />
               </button>
             )}
           </div>
 
-          {/* Body */}
-          <div className="p-5 space-y-4">
-
-            {/* To */}
+          <div className="space-y-4 p-5">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">To</label>
+              <label htmlFor="manual-to" className="text-sm font-medium">To</label>
               <input
+                id="manual-to"
                 type="email"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                placeholder="recipient@example.com"
-                className="w-full h-9 px-3 rounded-md border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                onBlur={() => setTouched(true)}
+                placeholder="name@example.org"
+                aria-invalid={toInvalid || undefined}
+                className={inputClass}
                 disabled={sending || sent}
                 autoFocus
               />
+              {toInvalid && <p className="text-xs text-destructive">Enter one valid email address.</p>}
+              {alreadyContacted && !sent && <p className="text-xs text-amber-700 dark:text-amber-400">You have emailed this address before.</p>}
             </div>
-
-            {/* Subject */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Subject</label>
-              <input
-                type="text"
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                placeholder="Enter subject…"
-                className="w-full h-9 px-3 rounded-md border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary"
-                disabled={sending || sent}
-              />
+              <label htmlFor="manual-subject" className="text-sm font-medium">Subject</label>
+              <input id="manual-subject" value={subject} onChange={(e) => setSubject(e.target.value)} className={inputClass} disabled={sending || sent} />
             </div>
-
-            {/* Body */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Message</label>
+              <label htmlFor="manual-body" className="text-sm font-medium">Message</label>
               <textarea
-                ref={bodyRef}
+                id="manual-body"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                placeholder="Write your message here…"
                 rows={8}
-                className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-1 focus:ring-primary resize-none leading-relaxed"
+                className="w-full resize-y rounded-md border bg-background px-3 py-2 text-sm leading-relaxed focus:ring-1 focus:ring-primary focus:outline-none disabled:opacity-60"
                 disabled={sending || sent}
               />
             </div>
 
-            {/* Gmail connect */}
-            {!accessToken && !sent && (
-              <div className="rounded-lg border border-dashed p-4 space-y-3">
+            {!token && !sent && (
+              <div className="space-y-3 rounded-lg border border-dashed p-4">
                 <p className="text-sm font-medium">Connect Gmail to send</p>
-                <p className="text-xs text-muted-foreground">
-                  You'll be asked to sign in with Google and grant permission to send emails on your behalf.
-                </p>
-                {gmailError && (
-                  <div className="flex items-start gap-2 p-3 rounded-md bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-xs">
-                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
-                    {gmailError}
-                  </div>
-                )}
-                <Button onClick={handleConnectGmail} disabled={gmailLoading} size="sm" variant="outline" className="cursor-pointer">
-                  {gmailLoading ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
-                  {gmailLoading ? 'Connecting…' : 'Connect Gmail'}
+                {connectError && <Banner tone="error">{GMAIL_ERROR_MESSAGES[connectError]}</Banner>}
+                <Button onClick={() => void connect()} disabled={connecting} size="sm" variant="outline">
+                  {connecting ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+                  {connecting ? 'Connecting…' : 'Connect Gmail'}
                 </Button>
               </div>
             )}
-
-            {accessToken && !sent && (
-              <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-                <Check size={13} />
-                Gmail connected
-              </div>
+            {token && !sent && (
+              <p className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400">
+                <Check size={13} /> Gmail connected
+              </p>
             )}
-
-            {sendError && (
-              <div className="flex items-start gap-2 p-3 rounded-md bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm">
-                <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                {sendError}
-              </div>
-            )}
-
-            {sent && (
-              <div className="flex items-center gap-2 p-3 rounded-md bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-sm">
-                <Check size={14} />
-                Email sent to {to}
-              </div>
+            {outcome?.kind === 'failed' && <Banner tone="error">{GMAIL_ERROR_MESSAGES[outcome.error]}</Banner>}
+            {outcome?.kind === 'sent' && (
+              <Banner tone={outcome.logged ? 'ok' : 'warn'}>
+                {outcome.logged
+                  ? `Email sent to ${recipient}.`
+                  : `Email sent to ${recipient}, but it could not be saved to outreach history. Note it down so it is not sent twice.`}
+              </Banner>
             )}
           </div>
 
-          {/* Footer */}
-          <div className="shrink-0 border-t px-5 py-4 flex items-center justify-between gap-3">
-            <Button variant="ghost" size="sm" onClick={onClose} className="cursor-pointer" disabled={sending}>
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t px-5 py-4">
+            <Button variant="ghost" size="sm" onClick={onClose} disabled={sending}>
               {sent ? 'Close' : 'Cancel'}
             </Button>
             {!sent && (
-              <Button
-                size="sm"
-                onClick={handleSend}
-                disabled={!accessToken || !to.trim() || !subject.trim() || !body.trim() || sending}
-                className="cursor-pointer gap-2"
-              >
+              <Button size="sm" onClick={() => void send()} disabled={!token || !recipient || !subject.trim() || !body.trim() || sending}>
                 {sending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
                 {sending ? 'Sending…' : 'Send'}
               </Button>
@@ -215,5 +196,20 @@ export default function ManualComposer({ onClose }: Props) {
         </div>
       </div>
     </>
+  );
+}
+
+function Banner({ tone, children }: { tone: 'ok' | 'warn' | 'error'; children: string }) {
+  const cls =
+    tone === 'ok'
+      ? 'bg-green-50 text-green-800 dark:bg-green-900/20 dark:text-green-300'
+      : tone === 'warn'
+        ? 'bg-amber-50 text-amber-900 dark:bg-amber-900/20 dark:text-amber-200'
+        : 'bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-300';
+  return (
+    <div role={tone === 'ok' ? 'status' : 'alert'} className={`flex items-start gap-2 rounded-md p-3 text-sm ${cls}`}>
+      {tone === 'ok' ? <Check size={14} className="mt-0.5 shrink-0" /> : <AlertCircle size={14} className="mt-0.5 shrink-0" />}
+      <span>{children}</span>
+    </div>
   );
 }
